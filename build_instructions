@@ -1,0 +1,41 @@
+Install tools:
+--------------
+
+- arm cross compiler
+
+  sudo apt-get install gcc-arm-linux-gnueabi
+
+- uboot tools
+
+  sudo apt-get install u-boot-tools
+
+
+Kernel compilation:
+-------------------
+
+- configuration:
+
+  a) if you want to use existing .config file:
+  
+     make CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm oldconfig
+
+  b) if you want to change .config settings:
+  
+     make CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm menuconfig
+
+- compilation
+
+  make CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm uImage
+  make CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm modules
+  make CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm INSTALL_MOD_PATH=$HOME/kobo/modules modules_install
+
+
+Upgrading kobo:
+---------------
+
+- copy uImage file to the reader's FAT32 partition
+
+- telnet and execute:
+
+  dd if=/mnt/onboard/uImage of=/dev/mmcblk0 bs=512 seek=2048
+  sync
