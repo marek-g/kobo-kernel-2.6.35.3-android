@@ -634,11 +634,13 @@ static int mxc_kpp_scan_matrix(void)
 						input_event(mxckbd_dev, EV_KEY,
 							    mxckpd_keycodes
 							    [scancode], 1);
+						input_sync(mxckbd_dev);
 						if (mxckpd_keycodes[scancode] ==
 						    KEY_LEFTSHIFT) {
 							input_event(mxckbd_dev,
 								    EV_KEY,
 								    KEY_3, 1);
+							input_sync(mxckbd_dev);
 						}
 						kpp_dev.iKeyState = KStateDown;
 						press_scancode[row][col] = -1;
@@ -676,11 +678,13 @@ static int mxc_kpp_scan_matrix(void)
 						input_event(mxckbd_dev, EV_KEY,
 							    mxckpd_keycodes
 							    [scancode], 0);
+						input_sync(mxckbd_dev);
 						if (mxckpd_keycodes[scancode] ==
 						    KEY_LEFTSHIFT) {
 							input_event(mxckbd_dev,
 								    EV_KEY,
 								    KEY_3, 0);
+							input_sync(mxckbd_dev);
 						}
 						kpp_dev.iKeyState = KStateUp;
 						release_scancode[row][col] = -1;
