@@ -24,8 +24,8 @@ static const char ZFORCE_TS_NAME[]	= "zForce-ir-touch";
 
 #define tp_int_pin			183
 
-#define DEFAULT_PANEL_W		800
-#define DEFAULT_PANEL_H		600
+#define DEFAULT_PANEL_W		600
+#define DEFAULT_PANEL_H		800
 //#define ZFORCE_TS_WIDTH			600
 //#define ZFORCE_TS_HIGHT			800
 
@@ -52,7 +52,7 @@ static struct zForce_data {
 	wait_queue_head_t wait;
 } zForce_ir_touch_data;
 
-static uint8_t cmd_Resolution_v2[] = {0xEE, 0x05, 0x02, (DEFAULT_PANEL_H&0xFF), (DEFAULT_PANEL_H>>8), (DEFAULT_PANEL_W&0xFF), (DEFAULT_PANEL_W>>8)};
+static uint8_t cmd_Resolution_v2[] = {0xEE, 0x05, 0x02, (DEFAULT_PANEL_W&0xFF), (DEFAULT_PANEL_W>>8), (DEFAULT_PANEL_H&0xFF), (DEFAULT_PANEL_H>>8)};
 static const uint8_t cmd_TouchData_v2[] = {0xEE, 0x01, 0x04};
 //static const uint8_t cmd_Frequency_v2[] = {0xEE, 0x07, 0x08, 10, 00, 100, 00, 100, 00};	//artis: orig
 static const uint8_t cmd_Frequency_v2[] = {0xEE, 0x07, 0x08, 50, 00, 100, 00, 100, 00}; //Joseph, idle freq change
@@ -61,7 +61,7 @@ static const uint8_t cmd_Active_v2[] = {0xEE, 0x01, 0x01};
 static const uint8_t cmd_Deactive_v2[] = {0xEE, 0x01, 0x00};
 static const uint8_t cmd_Dual_touch_v2[] = {0xEE, 0x05,0x03,1,0,0,0};
 
-static uint8_t cmd_Resolution[] = {0x02, (DEFAULT_PANEL_H&0xFF), (DEFAULT_PANEL_H>>8), (DEFAULT_PANEL_W&0xFF), (DEFAULT_PANEL_W>>8)};
+static uint8_t cmd_Resolution[] = {0x02, (DEFAULT_PANEL_W&0xFF), (DEFAULT_PANEL_W>>8), (DEFAULT_PANEL_H&0xFF), (DEFAULT_PANEL_H>>8)};
 static const uint8_t cmd_TouchData[] = {0x04};
 static const uint8_t cmd_Frequency[] = {0x08,10,100};
 static const uint8_t cmd_getFirmwareVer[] = {0x0A};
@@ -260,7 +260,8 @@ static void zForce_ir_touch_report_data(struct i2c_client *client, uint8_t *buf)
 		
 		if (2 != state) {
 			x = packet[2] | (packet[3] << 8);
-			y = ZFORCE_TS_HIGHT -(packet[0] | (packet[1] << 8)) -1;
+			y = ZFORCE_TS_WIDTH - (packet[0] | (packet[1] << 8)) - 1;
+			
 			input_report_abs(zForce_ir_touch_data.input, ABS_MT_TRACKING_ID, id);
 			input_report_abs(zForce_ir_touch_data.input, ABS_MT_TOUCH_MAJOR, 1);
 			input_report_abs(zForce_ir_touch_data.input, ABS_MT_WIDTH_MAJOR, 1);
@@ -509,45 +510,47 @@ static int zForce_ir_touch_probe(
 	{
 		if(1==gptHWCFG->m_val.bDisplayResolution) {
 			// 1024x758 .
-			ZFORCE_TS_WIDTH=1024;
-			ZFORCE_TS_HIGHT=758;
+			ZFORCE_TS_WIDTH=758;
+			ZFORCE_TS_HIGHT=1024;
 		}
 		else if(2==gptHWCFG->m_val.bDisplayResolution) {
 			// 1024x768
-			ZFORCE_TS_WIDTH=1024;
-			ZFORCE_TS_HIGHT=768;
+			ZFORCE_TS_WIDTH=768;
+			ZFORCE_TS_HIGHT=1024;
 		}
 		else if(3==gptHWCFG->m_val.bDisplayResolution) {
 			// 1440x1080
-			ZFORCE_TS_WIDTH=1440;
-			ZFORCE_TS_HIGHT=1080;
+			ZFORCE_TS_WIDTH=1080;
+			ZFORCE_TS_HIGHT=1440;
 		}
 		else {
 			// 800x600 
-			ZFORCE_TS_WIDTH=800;
-			ZFORCE_TS_HIGHT=600;
+			ZFORCE_TS_WIDTH=600;
+			ZFORCE_TS_HIGHT=800;
 		}
 
 		ZFORCE_TS_X_MAX=ZFORCE_TS_WIDTH;
 		ZFORCE_TS_Y_MAX=ZFORCE_TS_HIGHT;
 		
 		printk ("[%s-%d] Set touch resolution %dx%d\n",__func__,__LINE__,ZFORCE_TS_WIDTH,ZFORCE_TS_HIGHT);
-		cmd_Resolution[1] = (uint8_t)(ZFORCE_TS_HIGHT&0xff);
-		cmd_Resolution[2] = (uint8_t)(ZFORCE_TS_HIGHT>>8);
-		cmd_Resolution[3] = (uint8_t)(ZFORCE_TS_WIDTH&0xff);
-		cmd_Resolution[4] = (uint8_t)(ZFORCE_TS_WIDTH>>8);
+		cmd_Resolution[1] = (uint8_t)(ZFORCE_TS_WIDTH&0xff);
+		cmd_Resolution[2] = (uint8_t)(ZFORCE_TS_WIDTH>>8);
+		cmd_Resolution[3] = (uint8_t)(ZFORCE_TS_HIGHT&0xff);
+		cmd_Resolution[4] = (uint8_t)(ZFORCE_TS_HIGHT>>8);
 
-		cmd_Resolution_v2[3] = (uint8_t)(ZFORCE_TS_HIGHT&0xff);
-		cmd_Resolution_v2[4] = (uint8_t)(ZFORCE_TS_HIGHT>>8);
-		cmd_Resolution_v2[5] = (uint8_t)(ZFORCE_TS_WIDTH&0xff);
-		cmd_Resolution_v2[6] = (uint8_t)(ZFORCE_TS_WIDTH>>8);
+		cmd_Resolution_v2[3] = (uint8_t)(ZFORCE_TS_WIDTH&0xff);
+		cmd_Resolution_v2[4] = (uint8_t)(ZFORCE_TS_WIDTH>>8);
+		cmd_Resolution_v2[5] = (uint8_t)(ZFORCE_TS_HIGHT&0xff);
+		cmd_Resolution_v2[6] = (uint8_t)(ZFORCE_TS_HIGHT>>8);
 	}
-  input_set_abs_params(zForce_ir_touch_data.input, ABS_X, 0, ZFORCE_TS_X_MAX, 0, 0);
-	input_set_abs_params(zForce_ir_touch_data.input, ABS_Y, 0, ZFORCE_TS_Y_MAX, 0, 0);
-	input_set_abs_params(zForce_ir_touch_data.input, ABS_HAT0X, 0, ZFORCE_TS_X_MAX, 0, 0);
-	input_set_abs_params(zForce_ir_touch_data.input, ABS_HAT0Y, 0, ZFORCE_TS_Y_MAX, 0, 0);
-	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_POSITION_X, 0, ZFORCE_TS_X_MAX, 0, 0);
-	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_POSITION_Y, 0, ZFORCE_TS_Y_MAX, 0, 0);
+
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_X, 0, ZFORCE_TS_Y_MAX, 0, 0);
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_Y, 0, ZFORCE_TS_X_MAX, 0, 0);
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_HAT0X, 0, ZFORCE_TS_Y_MAX, 0, 0);
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_HAT0Y, 0, ZFORCE_TS_X_MAX, 0, 0);
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_POSITION_X, 0, ZFORCE_TS_Y_MAX, 0, 0);
+	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_POSITION_Y, 0, ZFORCE_TS_X_MAX, 0, 0);
+
 	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_TOUCH_MAJOR, 0, 2, 0, 0);
 	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_WIDTH_MAJOR, 0, 15, 0, 0);
 	input_set_abs_params(zForce_ir_touch_data.input, ABS_MT_TRACKING_ID, 1, 2, 0, 0);
