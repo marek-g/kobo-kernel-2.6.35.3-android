@@ -1574,6 +1574,16 @@ static int mxc_epdc_fb_check_var(struct fb_var_screeninfo *var,
 		break;
 	}
 
+	// MG:
+	// Disabled frame buffer rotation at all.
+	//
+	// Android asks for FB_ROTATE_CCW (270 degrees - portrait) here
+	// but this is upside down portrait so we have to
+	// configure ro.sf.hwrotate = 180 later in init.rc.
+	// I think it's better to have only one rotation than two
+	// (and no rotation at all at landscape mode).
+	var->rotate = 0;
+	
 	switch (var->rotate) {
 	case FB_ROTATE_UR:
 	case FB_ROTATE_UD:
