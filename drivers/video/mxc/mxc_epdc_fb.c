@@ -185,8 +185,6 @@ struct mxc_epdc_fb_data {
 	u32 *working_buffer_virt;
 	u32 working_buffer_phys;
 	u32 working_buffer_size;
-	dma_addr_t phys_addr_copybuf;	/* Phys address of copied update data */
-	void *virt_addr_copybuf;	/* Used for PxP SW workaround */
 	u32 order_cnt;
 	struct list_head full_marker_list;
 	u32 lut_update_order[EPDC_NUM_LUTS];
@@ -1719,68 +1717,6 @@ int mxc_epdc_fb_set_upd_scheme(u32 upd_scheme, struct fb_info *info)
 }
 EXPORT_SYMBOL(mxc_epdc_fb_set_upd_scheme);
 
-static void copy_before_process(struct mxc_epdc_fb_data *fb_data,
-	struct update_data_list *upd_data_list)
-{
-	struct mxcfb_update_data *upd_data =
-		&upd_data_list->update_desc->upd_data;
-	int i;
-	unsigned char *temp_buf_ptr = fb_data->virt_addr_copybuf;
-	unsigned char *src_ptr;
-	struct mxcfb_rect *src_upd_region;
-	int temp_buf_stride;
-	int src_stride;
-	int bpp = fb_data->epdc_fb_var.bits_per_pixel;
-	int left_offs, right_offs;
-	int x_trailing_bytes, y_trailing_bytes;
-	int alt_buf_offset;
-
-	/* Set source buf pointer based on input source, panning, etc. */
-	if (upd_data->flags & EPDC_FLAG_USE_ALT_BUFFER) {
-		src_upd_region = &upd_data->alt_buffer_data.alt_update_region;
-		src_stride =
-			upd_data->alt_buffer_data.width * bpp/8;
-		alt_buf_offset = upd_data->alt_buffer_data.phys_addr -
-			fb_data->info.fix.smem_start;
-		src_ptr = fb_data->info.screen_base + alt_buf_offset
-			+ src_upd_region->top * src_stride;
-	} else {
-		src_upd_region = &upd_data->update_region;
-		src_stride = fb_data->epdc_fb_var.xres_virtual * bpp/8;
-		src_ptr = fb_data->info.screen_base + fb_data->fb_offset
-			+ src_upd_region->top * src_stride;
-	}
-
-	temp_buf_stride = ALIGN(src_upd_region->width, 8) * bpp/8;
-	left_offs = src_upd_region->left * bpp/8;
-	right_offs = src_upd_region->width * bpp/8;
-	x_trailing_bytes = (ALIGN(src_upd_region->width, 8)
-		- src_upd_region->width) * bpp/8;
-
-	for (i = 0; i < src_upd_region->height; i++) {
-		/* Copy the full line */
-		memcpy(temp_buf_ptr, src_ptr + left_offs,
-			src_upd_region->width * bpp/8);
-
-		/* Clear any unwanted pixels at the end of each line */
-		if (src_upd_region->width & 0x7) {
-			memset(temp_buf_ptr + right_offs, 0x0,
-				x_trailing_bytes);
-		}
-
-		temp_buf_ptr += temp_buf_stride;
-		src_ptr += src_stride;
-	}
-
-	/* Clear any unwanted pixels at the bottom of the end of each line */
-	if (src_upd_region->height & 0x7) {
-		y_trailing_bytes = (ALIGN(src_upd_region->height, 8)
-			- src_upd_region->height) *
-			ALIGN(src_upd_region->width, 8) * bpp/8;
-		memset(temp_buf_ptr, 0x0, y_trailing_bytes);
-	}
-}
-
 static int epdc_process_update(struct update_data_list *upd_data_list,
 				   struct mxc_epdc_fb_data *fb_data)
 {
@@ -1795,7 +1731,6 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 	bool input_unaligned = false;
 	bool line_overflow = false;
 	int pix_per_line_added;
-	bool use_temp_buf = false;
 	struct mxcfb_rect temp_buf_upd_region;
 	struct update_desc_list *upd_desc_list = upd_data_list->update_desc;
 
@@ -1849,49 +1784,10 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 	 * buffer, which we pad with zeros to match the 8x8 alignment
 	 * requirement. This temp buffer becomes the input to the PxP.
 	 */
-	width_unaligned = src_upd_region->width & 0x7;
-	height_unaligned = src_upd_region->height & 0x7;
+	
+	// MG: [removed] - alignment checks were made before in mxc_epdc_fb_send_update
 
-	offset_from_4 = src_upd_region->left & 0x3;
-	input_unaligned = ((offset_from_4 * bytes_per_pixel % 4) != 0) ?
-				true : false;
-
-	pix_per_line_added = (offset_from_4 * bytes_per_pixel % 4)
-					/ bytes_per_pixel;
-	if ((((fb_data->epdc_fb_var.rotate == FB_ROTATE_UR) ||
-		fb_data->epdc_fb_var.rotate == FB_ROTATE_UD)) &&
-		(ALIGN(src_upd_region->width, 8) <
-			ALIGN(src_upd_region->width + pix_per_line_added, 8)))
-		line_overflow = true;
-
-	/* Grab pxp_mutex here so that we protect access
-	 * to copybuf in addition to the PxP structures */
 	mutex_lock(&fb_data->pxp_mutex);
-
-	if (((width_unaligned || height_unaligned || input_unaligned) &&
-		(upd_desc_list->upd_data.waveform_mode == WAVEFORM_MODE_AUTO))
-		|| line_overflow) {
-
-		dev_dbg(fb_data->dev, "Copying update before processing.\n");
-
-		/* Update to reflect what the new source buffer will be */
-		src_width = ALIGN(src_upd_region->width, 8);
-		src_height = ALIGN(src_upd_region->height, 8);
-
-		copy_before_process(fb_data, upd_data_list);
-
-		/*
-		 * src_upd_region should now describe
-		 * the new update buffer attributes.
-		 */
-		temp_buf_upd_region.left = 0;
-		temp_buf_upd_region.top = 0;
-		temp_buf_upd_region.width = src_upd_region->width;
-		temp_buf_upd_region.height = src_upd_region->height;
-		src_upd_region = &temp_buf_upd_region;
-
-		use_temp_buf = true;
-	}
 
 	/*
 	 * Compute buffer offset to account for
@@ -1961,10 +1857,7 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 
 	/* Source address either comes from alternate buffer
 	   provided in update data, or from the framebuffer. */
-	if (use_temp_buf)
-		sg_dma_address(&fb_data->sg[0]) =
-			fb_data->phys_addr_copybuf;
-	else if (upd_desc_list->upd_data.flags & EPDC_FLAG_USE_ALT_BUFFER)
+	if (upd_desc_list->upd_data.flags & EPDC_FLAG_USE_ALT_BUFFER)
 		sg_dma_address(&fb_data->sg[0]) =
 			upd_desc_list->upd_data.alt_buffer_data.phys_addr
 				+ pxp_input_offs;
@@ -2466,9 +2359,26 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 	int ret;
 	struct update_desc_list *upd_desc;
 	struct update_marker_data *marker_data, *next_marker, *temp_marker;
-	//printk("\n==========FB update============\n");
-	printk("\n========== upd_data.update_region( l, t, w, h ) = ( %d, %d, %d, %d )============\n",upd_data->update_region.left, upd_data->update_region.top, upd_data->update_region.width, upd_data->update_region.height);
+
+	//printk("\n========== upd_data.update_region( l, t, w, h ) = ( %d, %d, %d, %d )============\n",upd_data->update_region.left, upd_data->update_region.top, upd_data->update_region.width, upd_data->update_region.height);
 	
+	// MG: instead of copying data to temporary buffer later, fix alignment now
+	if (upd_data->update_region.left & 0x7) {
+		upd_data->update_region.width += (upd_data->update_region.left & 0x7);
+		upd_data->update_region.left &= (~0x7);
+	}
+	if (upd_data->update_region.top & 0x7) {
+		upd_data->update_region.height += (upd_data->update_region.top & 0x7);
+		upd_data->update_region.top &= (~0x7);
+	}
+	upd_data->update_region.width = ALIGN(upd_data->update_region.width, 8);
+	if (upd_data->update_region.left + upd_data->update_region.width > fb_data->epdc_fb_var.xres) {
+		upd_data->update_region.width = fb_data->epdc_fb_var.xres - upd_data->update_region.left;
+	}
+	upd_data->update_region.height = ALIGN(upd_data->update_region.height, 8);
+	if (upd_data->update_region.top + upd_data->update_region.height > fb_data->epdc_fb_var.yres) {
+		upd_data->update_region.height = fb_data->epdc_fb_var.yres - upd_data->update_region.top;
+	}
 	
 	
 	if ( (g_want_to_check_render_framebuffer_state == 1 ) && (upd_data->update_region.left + upd_data->update_region.width == fb_data->epdc_fb_var.xres)
@@ -2643,9 +2553,6 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 		     && (upd_data->update_region.left + upd_data->update_region.width == fb_data->epdc_fb_var.xres)
 		     && (upd_data->update_region.top + upd_data->update_region.height == fb_data->epdc_fb_var.yres) ) {
 				 
-		    //printk("fb_data->epdc_fb_var.xres = %d\n",fb_data->epdc_fb_var.xres);
-		    //printk("fb_data->epdc_fb_var.yres = %d\n",fb_data->epdc_fb_var.yres);
-		    
 		    fb_finish_render_timer.expires = jiffies + HZ/2;
             add_timer(&fb_finish_render_timer);
 			
@@ -4162,19 +4069,6 @@ int __devinit mxc_epdc_fb_probe(struct platform_device *pdev)
 			fb_data->max_pix_size, upd_list->phys_addr);
 	}
 
-	/*
-	 * Allocate memory for PxP SW workaround buffer
-	 * These buffers are used to hold copy of the update region,
-	 * before sending it to PxP for processing.
-	 */
-	fb_data->virt_addr_copybuf =
-	    dma_alloc_coherent(fb_data->info.device, fb_data->max_pix_size*2,
-			       &fb_data->phys_addr_copybuf, GFP_DMA);
-	if (fb_data->virt_addr_copybuf == NULL) {
-		ret = -ENOMEM;
-		goto out_upd_buffers;
-	}
-
 	fb_data->working_buffer_size = vmode->yres * vmode->xres * 2;
 	/* Allocate memory for EPDC working buffer */
 	fb_data->working_buffer_virt =
@@ -4183,7 +4077,7 @@ int __devinit mxc_epdc_fb_probe(struct platform_device *pdev)
 	if (fb_data->working_buffer_virt == NULL) {
 		dev_err(&pdev->dev, "Can't allocate mem for working buf!\n");
 		ret = -ENOMEM;
-		goto out_copybuffer;
+		goto out_upd_buffers;
 	}
 
 	/* Initialize EPDC pins */
@@ -4195,14 +4089,14 @@ int __devinit mxc_epdc_fb_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to get EPDC AXI clk."
 			"err = 0x%x\n", (int)fb_data->epdc_clk_axi);
 		ret = -ENODEV;
-		goto out_copybuffer;
+		goto out_upd_buffers;
 	}
 	fb_data->epdc_clk_pix = clk_get(fb_data->dev, "epdc_pix");
 	if (IS_ERR(fb_data->epdc_clk_pix)) {
 		dev_err(&pdev->dev, "Unable to get EPDC pix clk."
 			"err = 0x%x\n", (int)fb_data->epdc_clk_pix);
 		ret = -ENODEV;
-		goto out_copybuffer;
+		goto out_upd_buffers;
 	}
 
 	fb_data->in_init = false;
@@ -4448,10 +4342,6 @@ out_dma_work_buf:
 		fb_data->working_buffer_virt, fb_data->working_buffer_phys);
 	if (fb_data->pdata->put_pins)
 		fb_data->pdata->put_pins();
-out_copybuffer:
-	dma_free_writecombine(&pdev->dev, fb_data->max_pix_size*2,
-			      fb_data->virt_addr_copybuf,
-			      fb_data->phys_addr_copybuf);
 out_upd_buffers:
 	list_for_each_entry_safe(plist, temp_list, &fb_data->upd_buf_free_list,
 			list) {
@@ -4501,10 +4391,6 @@ static int mxc_epdc_fb_remove(struct platform_device *pdev)
 		dma_free_writecombine(&pdev->dev, fb_data->waveform_buffer_size,
 				fb_data->waveform_buffer_virt,
 				fb_data->waveform_buffer_phys);
-	if (fb_data->virt_addr_copybuf != NULL)
-		dma_free_writecombine(&pdev->dev, fb_data->max_pix_size*2,
-				fb_data->virt_addr_copybuf,
-				fb_data->phys_addr_copybuf);
 	list_for_each_entry_safe(plist, temp_list, &fb_data->upd_buf_free_list,
 			list) {
 		list_del(&plist->list);

@@ -37,5 +37,9 @@ Upgrading kobo:
 
 - telnet and execute:
 
-  dd if=/mnt/onboard/uImage of=/dev/mmcblk0 bs=512 seek=2048
+  dd bs=512 seek=2048 if=/mnt/onboard/uImage of=/dev/mmcblk0
   sync
+
+  on Android:
+  
+  dd bs=512 seek=2048 if=/sdcard/uImage of=/dev/block/mmcblk0
