@@ -33,13 +33,6 @@ Kernel compilation:
 Upgrading kobo:
 ---------------
 
-- copy uImage file to the reader's FAT32 partition
-
-- telnet and execute:
-
-  dd bs=512 seek=2048 if=/mnt/onboard/uImage of=/dev/mmcblk0
-  sync
-
-  on Android:
-  
-  dd bs=512 seek=2048 if=/sdcard/uImage of=/dev/block/mmcblk0
+  adb push arch/arm/boot/uImage /sdcard/uImage
+  adb shell dd bs=512 seek=2048 if=/sdcard/uImage of=/dev/block/mmcblk0; adb sync
+  adb shell rm /sdcard/uImage
