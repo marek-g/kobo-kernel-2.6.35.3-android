@@ -93,8 +93,14 @@
 #define GPIO_PWRALL     (0*32 + 27) /* GPIO_1_27 */
 #define EPDC_VCOM	(3*32 + 21)	/*GPIO_4_21 */
 
+#define EINK_UPDATE_MODE_NORMAL 0
+#define EINK_UPDATE_MODE_READING 1
+#define EINK_UPDATE_MODE_MONOCHROMATIC 2
+#define EINK_UPDATE_MODE_MONOCHROMATIC_DITHERED 3
+
 static unsigned long default_bpp = 16;
-static int giEPDC_MAX_NUM_UPDATES=2;
+static int giEPDC_MAX_NUM_UPDATES = 2;
+static int giEINK_UPDATE_MODE = EINK_UPDATE_MODE_NORMAL;
 
 // angela 20121011 add power low
 extern int ntx_get_battery_vol (void);
@@ -2362,6 +2368,16 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 
 	//printk("\n========== upd_data.update_region( l, t, w, h ) = ( %d, %d, %d, %d )============\n",upd_data->update_region.left, upd_data->update_region.top, upd_data->update_region.width, upd_data->update_region.height);
 	
+	// MG: handle eink update modes
+	if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_READING)
+	{
+		upd_data->update_mode = UPDATE_MODE_FULL;
+	}
+	else if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_MONOCHROMATIC)
+	{
+		upd_data->waveform_mode = 1; // du = 1, a2 = 4
+	}
+	
 	// MG: instead of copying data to temporary buffer later, fix alignment now
 	if (upd_data->update_region.left & 0x7) {
 		upd_data->update_region.width += (upd_data->update_region.left & 0x7);
@@ -2776,6 +2792,15 @@ static int mxc_epdc_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			if (!get_user(upd_scheme, (__u32 __user *) arg))
 				ret = mxc_epdc_fb_set_upd_scheme(upd_scheme,
 					info);
+			break;
+		}
+	case MXCFB_SET_UPDATE_MODE:
+		{
+			int mode;
+			if (!get_user(mode, (int32_t __user *) arg))
+			{
+				giEINK_UPDATE_MODE = mode;
+			}
 			break;
 		}
 	case MXCFB_SEND_UPDATE:
