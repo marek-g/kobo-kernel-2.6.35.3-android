@@ -47,6 +47,7 @@
 #include <linux/mxcfb_epdc_kernel.h>
 #include <linux/gpio.h>
 #include <asm/cacheflush.h>
+#include <asm/neon.h>
 #ifdef USE_PMIC
 #include <linux/regulator/driver.h>
 #endif
@@ -66,6 +67,9 @@
 #include <linux/gallen_dbg.h>
 
 #include <linux/reboot.h>	/* For kernel_power_off() :angela add*/
+
+#include "dither_neon.h"
+
 /*
  * Enable this define to have a default panel
  * loaded during driver initialization
@@ -2250,9 +2254,16 @@ static void epdc_submit_work_func(struct work_struct *work)
 				upd_data_list->update_desc->epdc_offs),
 			adj_update_region.width, adj_update_region.height,
 			ALIGN(adj_update_region.width, 8));
+		
+		// NEON version (faster but less readable)
+		/*kernel_neon_begin();
+		dither_neon_Y1(
+			(uint8_t *)(upd_data_list->virt_addr +
+				upd_data_list->update_desc->epdc_offs),
+			adj_update_region.width, adj_update_region.height,
+			ALIGN(adj_update_region.width, 8));
+		kernel_neon_end();*/
 	} else if (upd_data_list->update_desc->upd_data.flags & EPDC_FLAG_USE_DITHERING_Y4) {
-		err_dist = kzalloc((fb_data->info.var.xres_virtual + 3) * 3 * sizeof(int),
-				   GFP_KERNEL);
 		/* Dithering Y8 -> Y1 */
 		do_dithering_processing_Y4_v1_0(
 			(uint8_t *)(upd_data_list->virt_addr +
@@ -2405,13 +2416,14 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 	}
 	else if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_MONOCHROMATIC)
 	{
-		//upd_data->waveform_mode = 1; // du = 1, a2 = 4
 		upd_data->update_mode = UPDATE_MODE_PARTIAL;
+		upd_data->waveform_mode = 1; // du = 1, a2 = 4
 		upd_data->flags |= EPDC_FLAG_FORCE_MONOCHROME;
 	}
 	else if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_MONOCHROMATIC_DITHERED)
 	{
 		upd_data->update_mode = UPDATE_MODE_PARTIAL;
+		upd_data->waveform_mode = 1; // du = 1, a2 = 4
 		upd_data->flags = EPDC_FLAG_USE_DITHERING_Y1;
 	}
 	

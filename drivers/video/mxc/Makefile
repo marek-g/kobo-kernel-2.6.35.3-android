@@ -27,4 +27,9 @@ obj-$(CONFIG_FB_MXC_ELCDIF_FB)		    += mxc_elcdif_fb.o
 #obj-$(CONFIG_FB_MXC_AUO_K1901)             += mxc_auo_k1901_fb.o mxc_auo_k1901_startuplogo.o
 obj-$(CONFIG_FB_MXC_AUO_K1901)             += mxcfb_auo.o mxc_auo_k1901_startuplogo.o
 obj-y				+= fake_s1d13522.o epdfb_dc.o
-
+ifeq ($(CONFIG_KERNEL_MODE_NEON),y)
+	NEON_FLAGS				:= -mfloat-abi=softfp -mfpu=neon
+	CFLAGS_dither_neon.o			+= $(NEON_FLAGS)
+	CFLAGS_dither_neon.o			-= -nostdinc
+	obj-$(CONFIG_FB_MXC_EINK_PANEL)		+= dither_neon.o
+endif
