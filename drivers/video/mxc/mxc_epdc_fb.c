@@ -46,6 +46,7 @@
 #include <linux/mxcfb.h>
 #include <linux/mxcfb_epdc_kernel.h>
 #include <linux/gpio.h>
+#include <asm/cacheflush.h>
 #ifdef USE_PMIC
 #include <linux/regulator/driver.h>
 #endif
@@ -284,6 +285,17 @@ static void draw_mode0(struct mxc_epdc_fb_data *fb_data);
 static bool is_free_list_full(struct mxc_epdc_fb_data *fb_data);
 static void mxc_epdc_fb_fw_handler(const struct firmware *fw,void *context);
 
+static void do_dithering_processing_Y1_v1_0(
+	unsigned char *update_region_ptr,
+	struct mxcfb_rect *update_region,
+	unsigned long update_region_stride,
+	int *err_dist);
+
+static void do_dithering_processing_Y4_v1_0(
+	unsigned char *update_region_ptr,
+	struct mxcfb_rect *update_region,
+	unsigned long update_region_stride,
+	int *err_dist);
 
 #ifdef DEBUG
 static void dump_pxp_config(struct mxc_epdc_fb_data *fb_data,
@@ -2053,6 +2065,7 @@ static void epdc_submit_work_func(struct work_struct *work)
 	struct update_data_list *upd_data_list = NULL;
 	struct mxcfb_rect adj_update_region;
 	bool end_merge = false;
+	int *err_dist;
 	int ret;
 
 	/* Protect access to buffer queues and to update HW */
@@ -2232,6 +2245,33 @@ static void epdc_submit_work_func(struct work_struct *work)
 	}
 
 	/*
+	 * Dithering Processing
+	 */
+	if (upd_data_list->update_desc->upd_data.flags & EPDC_FLAG_USE_DITHERING_Y1) {
+		err_dist = kzalloc((fb_data->info.var.xres_virtual + 3) * 3 * sizeof(int),
+				   GFP_KERNEL);
+		/* Dithering Y8 -> Y1 */
+		do_dithering_processing_Y1_v1_0(
+			(uint8_t *)(upd_data_list->virt_addr +
+				upd_data_list->update_desc->epdc_offs),
+			&adj_update_region,
+			ALIGN(adj_update_region.width, 8),
+			err_dist);
+		kfree(err_dist);
+	} else if (upd_data_list->update_desc->upd_data.flags & EPDC_FLAG_USE_DITHERING_Y4) {
+		err_dist = kzalloc((fb_data->info.var.xres_virtual + 3) * 3 * sizeof(int),
+				   GFP_KERNEL);
+		/* Dithering Y8 -> Y1 */
+		do_dithering_processing_Y4_v1_0(
+			(uint8_t *)(upd_data_list->virt_addr +
+				upd_data_list->update_desc->epdc_offs),
+			&adj_update_region,
+			ALIGN(adj_update_region.width, 8),
+			err_dist);
+		kfree(err_dist);
+	}
+	
+	/*
 	 * If there are no LUTs available,
 	 * then we must wait for the resource to become free.
 	 * The IST will signal this event.
@@ -2378,6 +2418,11 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 		//upd_data->waveform_mode = 1; // du = 1, a2 = 4
 		upd_data->update_mode = UPDATE_MODE_PARTIAL;
 		upd_data->flags |= EPDC_FLAG_FORCE_MONOCHROME;
+	}
+	else if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_MONOCHROMATIC_DITHERED)
+	{
+		upd_data->update_mode = UPDATE_MODE_PARTIAL;
+		upd_data->flags = EPDC_FLAG_USE_DITHERING_Y1;
 	}
 	
 	// MG: instead of copying data to temporary buffer later, fix alignment now
@@ -4761,6 +4806,122 @@ static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat)
 	dev_dbg(fb_data->dev, "TX completed\n");
 
 	return 0;
+}
+
+
+/*
+ * Different dithering algorithm can be used. We chose
+ * to implement Bill Atkinson's algorithm as an example
+ * Thanks Bill Atkinson for his dithering algorithm.
+ */
+
+/*
+ * Dithering algorithm implementation - Y8->Y1 version 1.0 for i.MX
+ */
+static void do_dithering_processing_Y1_v1_0(
+	unsigned char *update_region_ptr,
+	struct mxcfb_rect *update_region,
+	unsigned long update_region_stride,
+	int *err_dist)
+{
+	/* create a temp error distribution array */
+	int bwPix;
+	int y;
+	int col;
+	int *err_dist_l0, *err_dist_l1, *err_dist_l2, distrib_error;
+	int width_3 = update_region->width + 3;
+	char *y8buf;
+	int x_offset = 0;
+
+	/* prime a few elements the error distribution array */
+	for (y = 0; y < update_region->height; y++) {
+		/* Dithering the Y8 in sbuf to BW suitable for A2 waveform */
+		err_dist_l0 = err_dist + (width_3) * (y % 3);
+		err_dist_l1 = err_dist + (width_3) * ((y + 1) % 3);
+		err_dist_l2 = err_dist + (width_3) * ((y + 2) % 3);
+
+		y8buf = update_region_ptr + x_offset;
+
+		/* scan the line and convert the Y8 to BW */
+		for (col = 1; col <= update_region->width; col++) {
+			bwPix = *(err_dist_l0 + col) + *y8buf;
+
+			if (bwPix >= 128) {
+				*y8buf++ = 0xff;
+				distrib_error = (bwPix - 255) >> 3;
+			} else {
+				*y8buf++ = 0;
+				distrib_error = bwPix >> 3;
+			}
+
+			/* modify the error distribution buffer */
+			*(err_dist_l0 + col + 2) += distrib_error;
+			*(err_dist_l1 + col + 1) += distrib_error;
+			*(err_dist_l0 + col + 1) += distrib_error;
+			*(err_dist_l1 + col - 1) += distrib_error;
+			*(err_dist_l1 + col) += distrib_error;
+			*(err_dist_l2 + col) = distrib_error;
+		}
+		x_offset += update_region_stride;
+	}
+
+	flush_cache_all();
+	//outer_flush_all();
+}
+
+/*
+ * Dithering algorithm implementation - Y8->Y4 version 1.0 for i.MX
+ */
+static void do_dithering_processing_Y4_v1_0(
+	unsigned char *update_region_ptr,
+	struct mxcfb_rect *update_region,
+	unsigned long update_region_stride,
+	int *err_dist)
+{
+	/* create a temp error distribution array */
+	int gcPix;
+	int y;
+	int col;
+	int *err_dist_l0, *err_dist_l1, *err_dist_l2, distrib_error;
+	int width_3 = update_region->width + 3;
+	char *y8buf;
+	int x_offset = 0;
+
+	/* prime a few elements the error distribution array */
+	for (y = 0; y < update_region->height; y++) {
+		/* Dithering the Y8 in sbuf to Y4 */
+		err_dist_l0 = err_dist + (width_3) * (y % 3);
+		err_dist_l1 = err_dist + (width_3) * ((y + 1) % 3);
+		err_dist_l2 = err_dist + (width_3) * ((y + 2) % 3);
+
+		y8buf = update_region_ptr + x_offset;
+
+		/* scan the line and convert the Y8 to Y4 */
+		for (col = 1; col <= update_region->width; col++) {
+			gcPix = *(err_dist_l0 + col) + *y8buf;
+
+			if (gcPix > 255)
+				gcPix = 255;
+			else if (gcPix < 0)
+				gcPix = 0;
+
+			distrib_error = (*y8buf - (gcPix & 0xf0)) >> 3;
+
+			*y8buf++ = gcPix & 0xf0;
+
+			/* modify the error distribution buffer */
+			*(err_dist_l0 + col + 2) += distrib_error;
+			*(err_dist_l1 + col + 1) += distrib_error;
+			*(err_dist_l0 + col + 1) += distrib_error;
+			*(err_dist_l1 + col - 1) += distrib_error;
+			*(err_dist_l1 + col) += distrib_error;
+			*(err_dist_l2 + col) = distrib_error;
+		}
+		x_offset += update_region_stride;
+	}
+
+	flush_cache_all();
+	//outer_flush_all();
 }
 
 static int __init mxc_epdc_fb_init(void)

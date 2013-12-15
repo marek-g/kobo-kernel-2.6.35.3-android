@@ -33,6 +33,4 @@ Kernel compilation:
 Upgrading kobo:
 ---------------
 
-  adb push arch/arm/boot/uImage /sdcard/uImage
-  adb shell dd bs=512 seek=2048 if=/sdcard/uImage of=/dev/block/mmcblk0; adb sync
-  adb shell rm /sdcard/uImage
+  adb push arch/arm/boot/uImage /cache/uImage; adb shell dd bs=512 seek=2048 if=/cache/uImage of=/dev/block/mmcblk0; adb shell sync; adb shell rm /cache/uImage
