@@ -287,15 +287,11 @@ static void mxc_epdc_fb_fw_handler(const struct firmware *fw,void *context);
 
 static void do_dithering_processing_Y1_v1_0(
 	unsigned char *update_region_ptr,
-	struct mxcfb_rect *update_region,
-	unsigned long update_region_stride,
-	int *err_dist);
+	int width, int height, int stride);
 
 static void do_dithering_processing_Y4_v1_0(
 	unsigned char *update_region_ptr,
-	struct mxcfb_rect *update_region,
-	unsigned long update_region_stride,
-	int *err_dist);
+	int width, int height, int stride);
 
 #ifdef DEBUG
 static void dump_pxp_config(struct mxc_epdc_fb_data *fb_data,
@@ -2248,16 +2244,12 @@ static void epdc_submit_work_func(struct work_struct *work)
 	 * Dithering Processing
 	 */
 	if (upd_data_list->update_desc->upd_data.flags & EPDC_FLAG_USE_DITHERING_Y1) {
-		err_dist = kzalloc((fb_data->info.var.xres_virtual + 3) * 3 * sizeof(int),
-				   GFP_KERNEL);
 		/* Dithering Y8 -> Y1 */
 		do_dithering_processing_Y1_v1_0(
 			(uint8_t *)(upd_data_list->virt_addr +
 				upd_data_list->update_desc->epdc_offs),
-			&adj_update_region,
-			ALIGN(adj_update_region.width, 8),
-			err_dist);
-		kfree(err_dist);
+			adj_update_region.width, adj_update_region.height,
+			ALIGN(adj_update_region.width, 8));
 	} else if (upd_data_list->update_desc->upd_data.flags & EPDC_FLAG_USE_DITHERING_Y4) {
 		err_dist = kzalloc((fb_data->info.var.xres_virtual + 3) * 3 * sizeof(int),
 				   GFP_KERNEL);
@@ -2265,10 +2257,8 @@ static void epdc_submit_work_func(struct work_struct *work)
 		do_dithering_processing_Y4_v1_0(
 			(uint8_t *)(upd_data_list->virt_addr +
 				upd_data_list->update_desc->epdc_offs),
-			&adj_update_region,
-			ALIGN(adj_update_region.width, 8),
-			err_dist);
-		kfree(err_dist);
+			adj_update_region.width, adj_update_region.height,
+			ALIGN(adj_update_region.width, 8));
 	}
 	
 	/*
@@ -4817,24 +4807,26 @@ static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat)
 
 /*
  * Dithering algorithm implementation - Y8->Y1 version 1.0 for i.MX
+ * Atkinson.
  */
 static void do_dithering_processing_Y1_v1_0(
 	unsigned char *update_region_ptr,
-	struct mxcfb_rect *update_region,
-	unsigned long update_region_stride,
-	int *err_dist)
+	int width, int height, int stride)
 {
 	/* create a temp error distribution array */
 	int bwPix;
 	int y;
 	int col;
 	int *err_dist_l0, *err_dist_l1, *err_dist_l2, distrib_error;
-	int width_3 = update_region->width + 3;
+	int width_3 = width + 3;
 	char *y8buf;
 	int x_offset = 0;
+	int *err_dist;
 
+	err_dist = kzalloc(width_3 * 3 * sizeof(int), GFP_KERNEL);
+	
 	/* prime a few elements the error distribution array */
-	for (y = 0; y < update_region->height; y++) {
+	for (y = 0; y < height; y++) {
 		/* Dithering the Y8 in sbuf to BW suitable for A2 waveform */
 		err_dist_l0 = err_dist + (width_3) * (y % 3);
 		err_dist_l1 = err_dist + (width_3) * ((y + 1) % 3);
@@ -4843,7 +4835,7 @@ static void do_dithering_processing_Y1_v1_0(
 		y8buf = update_region_ptr + x_offset;
 
 		/* scan the line and convert the Y8 to BW */
-		for (col = 1; col <= update_region->width; col++) {
+		for (col = 1; col <= width; col++) {
 			bwPix = *(err_dist_l0 + col) + *y8buf;
 
 			if (bwPix >= 128) {
@@ -4862,8 +4854,10 @@ static void do_dithering_processing_Y1_v1_0(
 			*(err_dist_l1 + col) += distrib_error;
 			*(err_dist_l2 + col) = distrib_error;
 		}
-		x_offset += update_region_stride;
+		x_offset += stride;
 	}
+	
+	kfree(err_dist);
 
 	flush_cache_all();
 	//outer_flush_all();
@@ -4874,21 +4868,22 @@ static void do_dithering_processing_Y1_v1_0(
  */
 static void do_dithering_processing_Y4_v1_0(
 	unsigned char *update_region_ptr,
-	struct mxcfb_rect *update_region,
-	unsigned long update_region_stride,
-	int *err_dist)
+	int width, int height, int stride)
 {
 	/* create a temp error distribution array */
 	int gcPix;
 	int y;
 	int col;
 	int *err_dist_l0, *err_dist_l1, *err_dist_l2, distrib_error;
-	int width_3 = update_region->width + 3;
+	int width_3 = width + 3;
 	char *y8buf;
 	int x_offset = 0;
+	int *err_dist;
 
+	err_dist = kzalloc(width_3 * 3 * sizeof(int), GFP_KERNEL);
+	
 	/* prime a few elements the error distribution array */
-	for (y = 0; y < update_region->height; y++) {
+	for (y = 0; y < height; y++) {
 		/* Dithering the Y8 in sbuf to Y4 */
 		err_dist_l0 = err_dist + (width_3) * (y % 3);
 		err_dist_l1 = err_dist + (width_3) * ((y + 1) % 3);
@@ -4897,7 +4892,7 @@ static void do_dithering_processing_Y4_v1_0(
 		y8buf = update_region_ptr + x_offset;
 
 		/* scan the line and convert the Y8 to Y4 */
-		for (col = 1; col <= update_region->width; col++) {
+		for (col = 1; col <= width; col++) {
 			gcPix = *(err_dist_l0 + col) + *y8buf;
 
 			if (gcPix > 255)
@@ -4917,9 +4912,11 @@ static void do_dithering_processing_Y4_v1_0(
 			*(err_dist_l1 + col) += distrib_error;
 			*(err_dist_l2 + col) = distrib_error;
 		}
-		x_offset += update_region_stride;
+		x_offset += stride;
 	}
 
+	kfree(err_dist);
+	
 	flush_cache_all();
 	//outer_flush_all();
 }
