@@ -2375,7 +2375,9 @@ int mxc_epdc_fb_send_update(struct mxcfb_update_data *upd_data,
 	}
 	else if (giEINK_UPDATE_MODE == EINK_UPDATE_MODE_MONOCHROMATIC)
 	{
-		upd_data->waveform_mode = 1; // du = 1, a2 = 4
+		//upd_data->waveform_mode = 1; // du = 1, a2 = 4
+		upd_data->update_mode = UPDATE_MODE_PARTIAL;
+		upd_data->flags |= EPDC_FLAG_FORCE_MONOCHROME;
 	}
 	
 	// MG: instead of copying data to temporary buffer later, fix alignment now
@@ -2803,6 +2805,14 @@ static int mxc_epdc_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			}
 			break;
 		}
+	case MXCFB_GET_UPDATE_MODE:
+		{
+			if (put_user(giEINK_UPDATE_MODE,
+				(int32_t __user *)argp))
+				ret = -EFAULT;
+			ret = 0;
+			break;
+		}
 	case MXCFB_SEND_UPDATE:
 		{
 			struct mxcfb_update_data upd_data;
@@ -2836,7 +2846,7 @@ static int mxc_epdc_fb_ioctl(struct fb_info *info, unsigned int cmd,
 				    mxc_epdc_fb_set_pwrdown_delay(delay, info);
 			break;
 		}
-
+	
 	case MXCFB_GET_PWRDOWN_DELAY:
 		{
 			int pwrdown_delay = mxc_epdc_get_pwrdown_delay(info);
